@@ -1,8 +1,8 @@
 import { idempotencyKeys, schedules } from "@trigger.dev/sdk";
 import { summarizeVideo } from "./summarize-video.js";
 
-// Cron runs once a day; look back 25 hours so nothing is missed at the boundary between runs.
-const LOOKBACK_MS = 25 * 60 * 60 * 1000;
+// Cron runs once every 2 days; look back 49 hours so nothing is missed at the boundary between runs.
+const LOOKBACK_MS = 49 * 60 * 60 * 1000;
 
 type FeedVideo = {
   id: string;
@@ -41,14 +41,18 @@ function parseFeed(xml: string): FeedVideo[] {
 
 export const checkNewVideos = schedules.task({
   id: "malkansview-check-new-videos",
-  // Once a day at 9:00 AM India time. Trigger.dev only accepts the older "Asia/Calcutta" name for IST.
-  cron: { pattern: "0 9 * * *", timezone: "Asia/Calcutta" },
+  // Every 2 days at 9:00 AM India time. Trigger.dev only accepts the older "Asia/Calcutta" name for IST.
+  cron: { pattern: "0 9 */2 * *", timezone: "Asia/Calcutta" },
   run: async () => {
-    const channelId = process.env.YOUTUBE_CHANNEL_ID;
-    if (!channelId) throw new Error("YOUTUBE_CHANNEL_ID is not set");
+    const rawChannelId = process.env.YOUTUBE_CHANNEL_ID;
+    if (!rawChannelId) throw new Error("YOUTUBE_CHANNEL_ID is not set");
+    // Defensive: strip stray whitespace/quotes a dashboard paste can leave in (not a secret, safe to log).
+    const channelId = rawChannelId.trim().replace(/^['"]|['"]$/g, "");
+    console.log(`Using YouTube channel ID: "${channelId}"`);
 
-    const res = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`);
-    if (!res.ok) throw new Error(`YouTube feed request failed: ${res.status}`);
+    const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`;
+    const res = await fetch(feedUrl);
+    if (!res.ok) throw new Error(`YouTube feed request failed: ${res.status} (url: ${feedUrl})`);
 
     const cutoff = Date.now() - LOOKBACK_MS;
     const fresh = parseFeed(await res.text()).filter(
